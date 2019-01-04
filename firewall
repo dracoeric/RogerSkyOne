@@ -1,0 +1,83 @@
+#!/bin/sh
+
+    # Flush all rules
+    iptables -t filter -F
+    iptables -t filter -X
+
+    # Create portscan chain
+    iptables -N portscan
+    iptables -A portscan -j LOG --log-level 4 --log-prefix 'Port scanning blocked'
+    iptables -A portscan -j DROP
+    
+    # Create icmp-flood chain
+    iptables -N icmp-flood
+    iptables -A icmp-flood -j LOG --log-level 4 --log-prefix 'icmp-flood blocked'
+    iptables -A icmp-flood -j DROP
+
+    # Create UDP-flood chain
+    iptables -N udp-flood
+    iptables -A udp-flood -j LOG --log-level 4 --log-prefix 'UDP-flood blocked'
+    iptables -A udp-flood -j DROP
+
+    # Create SYN-flood chain
+    iptables -N syn-flood
+    iptables -A syn-flood -j LOG --log-level 4 --log-prefix 'SYN-flood blocked'
+    iptables -A syn-flood -j DROP
+
+    # Drop all traffic policies
+    iptables -t filter -P INPUT DROP
+    iptables -t filter -P FORWARD DROP
+    iptables -t filter -P OUTPUT DROP
+
+    # Keep established and related traffic
+    iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+    iptables -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+    # Accept loopback
+    iptables -t filter -A INPUT -i lo -j ACCEPT
+    iptables -t filter -A OUTPUT -o lo -j ACCEPT
+
+    # Drop invalid packet
+    iptables -t filter -A INPUT -m state --state INVALID -j DROP
+    iptables -t filter -A FORWARD -m state --state INVALID -j DROP
+    iptables -t filter -A OUTPUT -m state --state INVALID -j DROP
+
+    ## Port scanning protection
+    # Null scan
+    iptables -t filter -A INPUT -m recent --name portscanners --update --seconds 30 -j portscan
+    iptables -t filter -A INPUT -p tcp --tcp-flags ALL NONE -m recent --name portscanners --set -j DROP
+    # Xmax scan
+    iptables -t filter -A INPUT -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -m recent --name portscanners --set -j DROP
+    iptables -t filter -A INPUT -p tcp --tcp-flags ALL FIN,PSH,URG -m recent --name portscanners --set -j DROP
+    iptables -t filter -A INPUT -p tcp --tcp-flags ALL ALL -m recent --name portscanners --set -j DROP
+    # Fin scan
+    iptables -t filter -A INPUT -p tcp --tcp-flags ALL FIN -m recent --name portscanners --set -j DROP
+    # ACK scan
+    iptables -t filter -A INPUT -p tcp ! --syn -m state --state NEW -m recent --name portscanners --set -j DROP
+    # Syn scan trapped port 22
+    iptables -t filter -A INPUT -p tcp -m multiport --dport 22 --tcp-flags ALL SYN -m recent --name portscanners --set -j DROP
+
+    # Allow ping
+    iptables -t filter -A INPUT -p icmp -m recent --name icmpflooders --update --seconds 30 -j icmp-flood
+    iptables -t filter -A INPUT -p icmp -m limit --limit 4/s --limit-burst 8 -j ACCEPT
+    iptables -t filter -A INPUT -p icmp -m recent --name icmpflooders --set  -j DROP
+    iptables -t filter -A OUTPUT -p icmp -j ACCEPT
+
+    # UDP flood protection
+    iptables -t filter -A INPUT -p udp -m recent --name udpflooders --update --seconds 30 -j udp-flood
+    iptables -t filter -A INPUT -p udp -m limit --limit 10/s --limit-burst 20 -j ACCEPT
+    iptables -t filter -A INPUT -p udp -m recent --name udpflooders --set  -j DROP
+
+    # SYN flood protection
+    iptables -t filter -A INPUT -p tcp --syn -m recent --name synflooders --update --seconds 30 -j syn-flood
+    iptables -t filter -A INPUT -p tcp --syn -m limit --limit 2/s --limit-burst 6 -j ACCEPT
+    iptables -t filter -A INPUT -p tcp --syn -m recent --name synflooders --set  -j DROP
+
+    # Open port for ssh, dns and http
+    iptables -t filter -A INPUT -p tcp -m tcp --dport 54321 -j ACCEPT
+    iptables -t filter -A OUTPUT -p tcp -m tcp --dport 54321 -j ACCEPT
+    iptables -t filter -A OUTPUT -p tcp --dport 53 -j ACCEPT
+    iptables -t filter -A OUTPUT -p udp --dport 53 -j ACCEPT
+    iptables -t filter -A OUTPUT -p tcp --dport 80 -j ACCEPT
+    iptables -t filter -A INPUT -p tcp --dport 80 -j ACCEPT
+exit 0
